@@ -1,0 +1,59 @@
+<!--
+    - Policies are applied in the order they appear.
+    - Position <base/> inside a section to inherit policies from the outer scope.
+    - Comments within policies are not preserved.
+-->
+<!-- Add policies as children to the <inbound>, <outbound>, <backend>, and <on-error> elements -->
+<policies>
+    <!-- Throttle, authorize, validate, cache, or transform the requests -->
+    <inbound>
+        <base />
+        <limit-concurrency key="global" max-count="5">
+            <!-- Solo se procesarán hasta 5 solicitudes concurrentes -->
+            <set-header name="X-Limit-Notice" exists-action="override">
+                <value>Limited to 5 concurrent requests</value>
+            </set-header>
+        </limit-concurrency>
+        <set-header name="x-request-context-data" exists-action="override">
+            <value>@(context.User.Id)</value>
+            <value>@(context.Deployment.Region)</value>
+        </set-header>
+        <retry condition="@(context.Response.StatusCode == 500)" count="3" interval="2" max-interval="10" delta="2" first-fast-retry="true" />
+        <choose>
+            <when condition="@(context.Request.Headers.GetValueOrDefault("X-Country") == "US")">
+                <set-backend-service base-url="https://us.api.example.com" />
+            </when>
+            <when condition="@(context.Request.Headers.GetValueOrDefault("X-Country") == "EU")">
+                <set-backend-service base-url="https://eu.api.example.com" />
+            </when>
+            <otherwise>
+                <set-backend-service base-url="https://global.api.example.com" />
+            </otherwise>
+        </choose>
+    </inbound>
+    <!-- Control if and how the requests are forwarded to services  -->
+    <backend>
+        <forward-request timeout="20" follow-redirects="true" />
+    </backend>
+    <!-- Customize the responses -->
+    <outbound>
+        <base />
+        <choose>
+            <when condition="@(context.Response.StatusCode == 200 && context.Product.Name.Equals("Starter"))">
+                <!-- NOTE that we are not using preserveContent=true when deserializing response body stream into a JSON object since we don't intend to access it again. 
+                See details on /azure/api-management/api-management-transformation-policies#SetBody -->
+                <set-body>@{
+                    var response = context.Response.Body.As<JObject>();
+                    foreach (var key in new [] {"minutely", "hourly", "daily", "flags"}) {
+                    response.Property (key).Remove ();
+                }
+                return response.ToString();
+                }</set-body>
+            </when>
+        </choose>
+    </outbound>
+    <!-- Handle exceptions and customize error responses  -->
+    <on-error>
+        <base />
+    </on-error>
+</policies>
